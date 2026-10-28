@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.data/
+.claude/
+.env
+.env.local
+src/generated/
+prisma/*.db
+prisma/*.db-journal
+*.tsbuildinfo
+artifacts/
+demo-output/

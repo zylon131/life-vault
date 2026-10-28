@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 有所托 v1 uses separate tables; preserve legacy prototype data.
+model Account {
+  id String @id @default(cuid())
+  // Legacy fields are kept nullable during the password-to-email migration.
+  handle String? @unique
+  passwordHash String?
+  emailHash String? @unique
+  emailEncrypted String?
+  emailVerifiedAt DateTime?
+  termsAcceptedAt DateTime?
+  displayName String
+  document String @default("{}")
+  revision Int @default(0)
+  lastCheckInAt DateTime @default(now())
+  checkInInterval Int @default(24)
+  reminderEnabled Boolean @default(false)
+  phoneEncrypted String?
+  phonePreview String?
+  phoneVerifiedAt DateTime?
+  smsConsentAt DateTime?
+  wechatOpenIdHash String? @unique
+  wechatOpenIdEncrypted String?
+  wechatBoundAt DateTime?
+  wechatSubscribed Boolean @default(false)
+  wechatReminderHour Int @default(21)
+  contact String @default("")
+  createdAt DateTime @default(now())
+  sessions LoginSession[]
+  invitations Invitation[]
+  deliveries Delivery[]
+  verificationCodes VerificationCode[]
+  wechatBindingChallenges WechatBindingChallenge[]
+  wechatCheckInLinks WechatCheckInLink[]
+}
+
+model WechatBindingChallenge {
+  tokenHash String @id
+  accountId String
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([accountId, expiresAt])
+}
+
+model WechatCheckInLink {
+  tokenHash String @id
+  accountId String
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([accountId, expiresAt])
+}
+
+model LoginSession {
+  hash String @id
+  accountId String
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  verifiedAt DateTime @default(now())
+}
+
+model VerificationCode {
+  id String @id @default(cuid())
+  channel String
+  purpose String
+  targetHash String
+  targetEncrypted String
+  codeHash String
+  accountId String?
+  account Account? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  sessionHash String?
+  requestIpHash String
+  attempts Int @default(0)
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([targetHash, purpose, createdAt])
+  @@index([requestIpHash, createdAt])
+  @@index([expiresAt])
+}
+
+model Invitation {
+  hash String @id
+  accountId String
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  slot Int
+  keyVersion String
+  name String
+  contact String
+  contactEncrypted String @default("")
+  proofHash String
+  accepted Boolean @default(false)
+  confirmed Boolean @default(false)
+  @@unique([accountId, slot])
+}
+
+model Delivery {
+  id String @id @default(cuid())
+  accountId String
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  eventKey String @unique
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String         @id @default(cuid())
+  email               String?        @unique
+  phone               String?        @unique
+  name                String         @default("守护者")
+  avatarUrl           String?
+  
+  // 微信生态集成字段（核心闭环）
+  wechatOpenId        String?        @unique // 微信服务号 OpenID（推送模板消息的唯一凭据）
+  wechatUnionId       String?        @unique // 微信开放平台 UnionID（跨端统一凭据）
+  wechatNickname      String?
+  wechatSubscribed    Boolean        @default(false) // 是否已关注微信服务号
+  wechatPushEnabled   Boolean        @default(true)  // 是否开启服务号每日打卡推送
+  wechatPushHour      Int            @default(21)    // 每天晚上 21:00 发送打卡卡片
+  
+  // 无感一键打卡专用安全 Token (附带在模板消息链接中，点击即打卡)
+  checkInSecretToken  String         @unique @default(cuid())
+  
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  
+  // 守护状态机
+  lastCheckInAt       DateTime       @default(now())
+  checkInInterval     Int            @default(72) // 默认 72 小时 (3天)
+  status              String         @default("ACTIVE") // ACTIVE, WARNING, ALERT, CONFIRMING, UNLOCKED
+  
+  // 会员体系
+  tier                String         @default("GUARDIAN") // FREE, GUARDIAN, LIFETIME
+  tierExpireAt        DateTime?
+  
+  // 关联表
+  vault               Vault?
+  trustees            Trustee[]
+  checkInLogs         CheckInLog[]
+  wechatQrScenes      WechatQrScene[]
+}
+
+// 微信带参二维码场景表（用于扫码关注自动注册/登录与微信绑定）
+model WechatQrScene {
+  id          String      @id @default(cuid())
+  sceneKey    String      @unique // 随机生成的场景票据 Ticket
+  userId      String?     // 绑定已有用户 ID（若是登录则扫码后关联）
+  user        User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      String      @default("PENDING") // PENDING, SCANNED, EXPIRED, CONFIRMED
+  openId      String?
+  createdAt   DateTime    @default(now())
+  expireAt    DateTime
+}
+
+model Vault {
+  id              String      @id @default(cuid())
+  userId          String      @unique
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // 零知识密文存储（前端端加密生成，绝对无明文）
+  ciphertext      String      // AES-256-GCM 密文 (Base64)
+  iv              String      // 初始向量 (Base64)
+  authTag         String      // 认证标签
+  
+  // 门限秘密参数
+  threshold       Int         @default(2) // 门限 k
+  totalShares     Int         @default(2) // 总碎片 n
+  
+  // 公开元信息
+  itemCount       Int         @default(0)
+  title           String      @default("最后的交代与心愿")
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model Trustee {
+  id              String      @id @default(cuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name            String
+  roleTag         String
+  contactChannel  String
+  
+  hasConfirmedDeath Boolean   @default(false)
+  submittedShare    String?
+  verifiedAt        DateTime?
+  
+  createdAt       DateTime    @default(now())
+}
+
+model CheckInLog {
+  id              String      @id @default(cuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  checkInType     String      @default("WECHAT_TEMPLATE") // WECHAT_TEMPLATE, WEB_BUTTON, EMAIL_LINK
+  ipAddress       String?
+  note            String?
+  timestamp       DateTime    @default(now())
+}

@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; form-action 'none'"><title>有所托 · 离线共同开启</title><style>body{background:#edf2f5;color:#243c48;font:16px/1.9 system-ui,sans-serif;max-width:760px;padding:30px 20px;margin:auto}h1{font-family:KaiTi,serif;font-weight:400;font-size:40px}section{background:#fffefa;padding:28px;margin:24px 0;border:1px solid #d6dfe4}textarea{box-sizing:border-box;width:100%;min-height:130px;margin:10px 0 22px;padding:12px;border:1px solid #bacbd4}button{background:#376179;color:white;border:0;padding:15px 25px;cursor:pointer;font-size:16px}label,input{display:block}input{margin:12px 0 22px;max-width:100%}p{white-space:pre-wrap;overflow-wrap:anywhere}#error{color:#9d3838}small{color:#607784}</style></head><body><small>有所托 / 离线恢复包</small><h1>见字如面。</h1><p>这是导出时的交代副本。无需联网，准备两份匹配的信钥即可共同开启。</p><p id="version"></p><section id="form"><label for="a">第一份信钥</label><textarea id="a" placeholder="粘贴完整信钥"></textarea><label for="fa">或导入第一份信钥文件</label><input id="fa" type="file" accept=".json"><label for="b">第二份信钥</label><textarea id="b" placeholder="粘贴完整信钥"></textarea><label for="fb">或导入第二份信钥文件</label><input id="fb" type="file" accept=".json"><button id="open">共同开启交代</button><p id="error" role="alert"></p></section><div id="result"></div><button id="close" hidden>关闭交代</button><p><small>两位托付人可共同查看全部交代。平台无法补齐遗失的信钥。内容更新后需重新导出。</small></p><script>/*__SECRETS__*/</script><script>
+const doc=__YST_DOCUMENT__;
+const el=id=>document.getElementById(id);
+el('version').textContent='内容版本 '+doc.contentVersion+' · 导出内容更新时间 '+doc.updatedAt;
+for(const [f,t] of [['fa','a'],['fb','b']])el(f).onchange=async()=>{const file=el(f).files[0];if(!file)return;if(file.size>10000){el('error').textContent='信钥文件过大';return}el(t).value=await file.text()};
+const bytes=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+el('open').onclick=async()=>{el('error').textContent='';try{
+ const cards=[JSON.parse(el('a').value),JSON.parse(el('b').value)];
+ if(cards.some(c=>c.format!=='yst-key-1'||c.keyVersion!==doc.keyVersion)||cards[0].slot===cards[1].slot||cards[0].share===cards[1].share)throw Error('请使用同一版本的两份不同信钥。');
+ const key=secrets.combine(cards.map(c=>c.share));if(!/^[0-9a-f]{64}$/i.test(key))throw Error();
+ const raw=Uint8Array.from(key.match(/../g),v=>parseInt(v,16)),k=await crypto.subtle.importKey('raw',raw,'AES-GCM',false,['decrypt']);
+ const text=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes(doc.cipher.iv)},k,bytes(doc.cipher.ciphertext));
+ const p=JSON.parse(new TextDecoder().decode(text));
+ el('result').replaceChildren();
+ function add(title,body){const s=document.createElement('section'),h=document.createElement('h2'),b=document.createElement('p');h.textContent=title;b.textContent=body;s.append(h,b);el('result').append(s)}
+ p.people.forEach(x=>add('请联系：'+x.name,[x.relation,x.contact,x.circle&&('请通知：'+x.circle),x.message].filter(Boolean).join('\n')));
+ p.letters.forEach(x=>add('致 '+x.name,[x.contact&&('收信人线索：'+x.contact),x.content,x.relayName&&('请由 '+x.relayName+' 转达'+(x.relayContact?' · '+x.relayContact:''))].filter(Boolean).join('\n')));
+ p.arrangements.forEach(x=>add(x.title||'请帮我安排',[x.content,x.handlerName&&('希望交给 '+x.handlerName+' 处理'+(x.handlerContact?' · '+x.handlerContact:''))].filter(Boolean).join('\n')));
+ el('a').value='';el('b').value='';el('form').hidden=true;el('close').hidden=false;
+ }catch(e){el('error').textContent='无法开启，请检查信钥是否齐全、版本是否匹配，文件是否完整。';}};
+el('close').onclick=()=>{el('result').replaceChildren();el('form').hidden=false;el('close').hidden=true;el('fa').value='';el('fb').value=''};
+</script></body></html>
